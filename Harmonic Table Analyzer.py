@@ -24,12 +24,12 @@ HIGHLIGHT_COLOR = 'font-weight: bold; background-color: #fff3cd'
 
 # Column definitions for all table types
 VOLTAGE_COLUMNS = [
-    "Harmonic", "Time Percent Limit[%]", "Reg Max[%]",
+    "N", "[%]", "Reg Max[%]",
     "Measured_V1N", "Measured_V2N", "Measured_V3N", 
     "Result_V1N", "Result_V2N", "Result_V3N"
 ]
 CURRENT_COLUMNS = [
-    "Harmonic", "Time Percent Limit[%]", "Reg Max[%]",
+    "N", "[%]", "Reg Max[%]",
     "Measured_I1", "Measured_I2", "Measured_I3", 
     "Result_I1", "Result_I2", "Result_I3"
 ]
@@ -66,7 +66,7 @@ TEXT_EXTRACTION_PATTERNS = [
     # Standard pattern with Pass/Fail
     re.compile(
         r'(\d+)\s*,?\s*'  # Harmonic
-        r'(\d+)\s*,?\s*'  # Time percent
+        r'(\d+)\s*,?\s*'  # Time percent (%)
         r'([\d.]+)\s*,?\s*'  # Reg max
         r'([\d.]+)\s*,?\s*'  # Measured 1
         r'([\d.]+)\s*,?\s*'  # Measured 2
@@ -340,26 +340,26 @@ def process_table_data(table_data, table_name=None):
 
     try:
         df = pd.DataFrame(table_data, columns=columns)
-        df['Harmonic'] = pd.to_numeric(df['Harmonic'], errors='coerce')
-        df = df.dropna(subset=['Harmonic'])
+        df['N'] = pd.to_numeric(df['N'], errors='coerce')
+        df = df.dropna(subset=['N'])
         
         # CRITICAL FILTER: Remove fundamental frequency and invalid harmonics
-        df = df[df['Harmonic'] != 1]
+        df = df[df['N'] != 1]
         
         # ADDITIONAL FILTER: Only keep valid harmonic range (2-50)
         # This removes any year data (2024, 2025, etc.) that might have been captured
-        df = df[(df['Harmonic'] >= 2) & (df['Harmonic'] <= 50)]
+        df = df[(df['N'] >= 2) & (df['N'] <= 50)]
         
-        df = df.drop_duplicates(subset=['Harmonic', 'Time Percent Limit[%]'])
+        df = df.drop_duplicates(subset=['N', '[%]'])
         
-        found_harmonics = set(df['Harmonic'].astype(int))
+        found_harmonics = set(df['N'].astype(int))
         missing = sorted(EXPECTED_HARMONICS - found_harmonics)
         
         # for global harmonics check
         #if missing:
         #    st.warning(f"Missing harmonics in {table_name}: {missing[:10]}{'...' if len(missing) > 10 else ''}")
         
-        numeric_cols = ["Harmonic", "Time Percent Limit[%]", "Reg Max[%]", columns[3], columns[4], columns[5]]
+        numeric_cols = ["N", "[%]", "Reg Max[%]", columns[3], columns[4], columns[5]]
         for col in numeric_cols:
             df[col] = pd.to_numeric(df[col], errors="coerce")
         
@@ -377,13 +377,13 @@ def split_table(df):
     def split_odd_even(df_subset):
         if df_subset.empty:
             return pd.DataFrame(), pd.DataFrame()
-        df_subset = df_subset.sort_values("Harmonic")
-        odd = df_subset[df_subset["Harmonic"] % 2 == 1].reset_index(drop=True)
-        even = df_subset[df_subset["Harmonic"] % 2 == 0].reset_index(drop=True)
+        df_subset = df_subset.sort_values("N")
+        odd = df_subset[df_subset["N"] % 2 == 1].reset_index(drop=True)
+        even = df_subset[df_subset["N"] % 2 == 0].reset_index(drop=True)
         return odd, even
     
-    df_95 = df[df["Time Percent Limit[%]"] == 95.0].copy()
-    df_99 = df[df["Time Percent Limit[%]"] == 99.0].copy()
+    df_95 = df[df["[%]"] == 95.0].copy()
+    df_99 = df[df["[%]"] == 99.0].copy()
     
     return {"95": split_odd_even(df_95), "99": split_odd_even(df_99)}
 
@@ -431,7 +431,7 @@ def highlight_fails(df):
                     styles[col] = FAIL_COLOR
                     if result_col:
                         styles[result_col] = FAIL_COLOR
-                    styles['Harmonic'] = HIGHLIGHT_COLOR
+                    styles['N'] = HIGHLIGHT_COLOR
             except:
                 continue
                 
@@ -439,21 +439,22 @@ def highlight_fails(df):
 
     return df.style.apply(apply_row, axis=1).set_properties(
         **{'text-align': 'center', 'border': '1px solid #ddd'}
-    ).format("{:.2f}", subset=measured_cols)
+    ).format("{:g}", subset=measured_cols)
 
 def display_table_section(title, odd_df, even_df):
     """Display tables in two columns for odd/even harmonics with fail highlighting"""
-    st.subheader(title)
+    if title.strip():  # Only show title if it's not empty or just spaces
+        st.markdown(f"### {title}")
     col1, col2 = st.columns(2)
 
     def display_harmonics_table(df, harmonic_type, column):
         with column:
-            st.markdown(f"**{harmonic_type} Harmonics**")
+            st.markdown(f"<h4 style='color: grey;'>{harmonic_type} Harmonics </h4>", unsafe_allow_html=True)
             if not df.empty:
                 styled_df = highlight_fails(df)
                 st.dataframe(styled_df, height=400, use_container_width=True)
 
-                found = set(df['Harmonic'].astype(int))
+                found = set(df['N'].astype(int))
                 expected = set(h for h in EXPECTED_HARMONICS if h % 2 == (1 if harmonic_type == "Odd" else 0))
                 missing = sorted(expected - found)
                 if missing:
@@ -643,8 +644,8 @@ def analyze_failures(df):
     for _, row in df.iterrows():
         try:
             threshold = float(row['Reg Max[%]'])
-            harmonic = int(row['Harmonic'])
-            time_limit = row['Time Percent Limit[%]']
+            harmonic = int(row['N'])
+            time_limit = row['[%]']
             
             for col in measured_cols:
                 phase = col.split('_')[-1]  # Gets V1N/V2N/V3N or I1/I2/I3
@@ -657,7 +658,7 @@ def analyze_failures(df):
                         'Time Limit (%)': time_limit,
                         'Allowed (%)': threshold,
                         'Measured (%)': value,
-                        'Exceedance (%)': round(value - threshold, 2)
+                        'Exceedance (%)':value - threshold
                     })
         except (ValueError, KeyError):
             continue
@@ -790,29 +791,58 @@ if selected_file:
         display_violation_summary(tables, filename)
         
         # Display tables
-        for table_name in SUPPORTED_TABLES:
-            if tables.get(table_name):
-                st.markdown(f"---\n### 📊 {table_name}")
-                
-                try:
-                    df = process_table_data(tables[table_name], table_name)
-                    if not df.empty:
-                        split_dfs = split_table(df)
-                        
-                        for limit in ["95", "99"]:
-                            odd_df, even_df = split_dfs[limit]
-                            if not odd_df.empty or not even_df.empty:
-                                display_table_section(
-                                    f"{table_name} - {limit}% Time Limit",
-                                    odd_df, even_df
-                                )
-                    else:
-                        st.warning(f"No valid data found in {table_name}")
-                except Exception as e:
-                    st.error(f"Error processing table {table_name}: {str(e)}")
-            else:
-                st.info(f"No data found for: {table_name}")
-    
+        st.markdown("---")
+        st.subheader("Harmonic Tables Overview")
+        # Display tables organized by type
+        voltage_tables = [name for name in SUPPORTED_TABLES if "Voltage" in name]
+        current_tables = [name for name in SUPPORTED_TABLES if "Current" in name]
+
+        # Voltage Section
+        with st.expander("🔵 **VOLTAGE MEASUREMENTS**", expanded=True):
+            for table_name in voltage_tables:
+                if tables.get(table_name):
+                    st.markdown(f"<h3 style='color: #4A90E2;'> {table_name}</h3>", unsafe_allow_html=True)
+                    try:
+                        df = process_table_data(tables[table_name], table_name)
+                        if not df.empty:
+                            split_dfs = split_table(df)
+                            
+                            for limit in ["95", "99"]:
+                                odd_df, even_df = split_dfs[limit]
+                                if not odd_df.empty or not even_df.empty:
+                                    st.markdown(f"<h3 style='color: #6BAED6;'> {limit}% Time Limit</h3>", unsafe_allow_html=True)
+                                    display_table_section("", odd_df, even_df)  
+                        else:
+                            st.warning(f"No valid data found in {table_name}")
+                    except Exception as e:
+                        st.error(f"Error processing table {table_name}: {str(e)}")
+                else:
+                    st.info(f"No data found for: {table_name}")
+
+        st.markdown("---")
+
+        # Current Section  
+        with st.expander("🟠 **CURRENT MEASUREMENTS**", expanded=True):
+            for table_name in current_tables:
+                if tables.get(table_name):
+                    st.markdown(f"<h3 style='color: #E78400;'> {table_name}</h3>", unsafe_allow_html=True)
+                    try:
+                        df = process_table_data(tables[table_name], table_name)
+                        if not df.empty:
+                            split_dfs = split_table(df)
+                            
+                            for limit in ["95", "99"]:
+                                odd_df, even_df = split_dfs[limit]
+                                if not odd_df.empty or not even_df.empty:
+                                    st.markdown(f"<h3 style='color: #EABD8C;'> {limit}% Time Limit</h3>", unsafe_allow_html=True)
+                                    display_table_section("", odd_df, even_df)  
+                        else:
+                            st.warning(f"No valid data found in {table_name}")
+                    except Exception as e:
+                        st.error(f"Error processing table {table_name}: {str(e)}")
+                else:
+                    st.info(f"No data found for: {table_name}")
+            
     except Exception as e:
         st.error(f"Error processing file {filename}: {str(e)}")
 
